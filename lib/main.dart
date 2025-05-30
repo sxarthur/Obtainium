@@ -12,13 +12,14 @@ import 'package:obtainium/providers/source_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:dynamic_color/dynamic_color.dart';
-import 'package:device_info_plus/device_info_plus.dart';
 import 'package:background_fetch/background_fetch.dart';
 import 'package:easy_localization/easy_localization.dart';
 // ignore: implementation_imports
 import 'package:easy_localization/src/easy_localization_controller.dart';
 // ignore: implementation_imports
 import 'package:easy_localization/src/localization.dart';
+import 'package:dbus/dbus.dart';
+import 'package:file_selector_linux/file_selector_linux.dart';
 
 List<MapEntry<Locale, String>> supportedLocales = const [
   MapEntry(Locale('en'), 'English'),
@@ -102,12 +103,6 @@ void main() async {
     // Already added, do nothing (see #375)
   }
   await EasyLocalization.ensureInitialized();
-  if ((await DeviceInfoPlugin().androidInfo).version.sdkInt >= 29) {
-    SystemChrome.setSystemUIOverlayStyle(
-      const SystemUiOverlayStyle(systemNavigationBarColor: Colors.transparent),
-    );
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-  }
   runApp(MultiProvider(
     providers: [
       ChangeNotifierProvider(create: (context) => AppsProvider()),
@@ -122,7 +117,6 @@ void main() async {
         useOnlyLangCode: false,
         child: const Obtainium()),
   ));
-  BackgroundFetch.registerHeadlessTask(backgroundFetchHeadlessTask);
 }
 
 class Obtainium extends StatefulWidget {
@@ -142,24 +136,18 @@ class _ObtainiumState extends State<Obtainium> {
   }
 
   Future<void> initPlatformState() async {
-    await BackgroundFetch.configure(
-        BackgroundFetchConfig(
-            minimumFetchInterval: 15,
-            stopOnTerminate: false,
-            startOnBoot: true,
-            enableHeadless: true,
-            requiresBatteryNotLow: false,
-            requiresCharging: false,
-            requiresStorageNotLow: false,
-            requiresDeviceIdle: false,
-            requiredNetworkType: NetworkType.ANY), (String taskId) async {
-      await bgUpdateCheck(taskId, null);
-      BackgroundFetch.finish(taskId);
-    }, (String taskId) async {
-      context.read<LogsProvider>().add('BG update task timed out.');
-      BackgroundFetch.finish(taskId);
-    });
     if (!mounted) return;
+    var sessionBus = DBusClient.session();
+    var result = await sessionBus.callMethod(
+      DBusMethodCall(
+        interface: 'org.freedesktop.Notifications',
+        name: 'GetCapabilities',
+        sender: 'org.freedesktop.Notifications',
+      ),
+    );
+    if (result.returnValues.isNotEmpty) {
+      // Handle notification permissions
+    }
   }
 
   @override
@@ -175,7 +163,20 @@ class _ObtainiumState extends State<Obtainium> {
       if (isFirstRun) {
         logs.add('This is the first ever run of Obtainium.');
         // If this is the first run, ask for notification permissions and add Obtainium to the Apps list
-        Permission.notification.request();
+        if (Platform.isLinux) {
+          // Linux-specific code for notification permissions
+          var sessionBus = DBusClient.session();
+          var result = await sessionBus.callMethod(
+            DBusMethodCall(
+              interface: 'org.freedesktop.Notifications',
+              name: 'GetCapabilities',
+              sender: 'org.freedesktop.Notifications',
+            ),
+          );
+          if (result.returnValues.isNotEmpty) {
+            // Handle notification permissions
+          }
+        }
         if (!fdroid) {
           getInstalledInfo(obtainiumId).then((value) {
             if (value?.versionName != null) {
